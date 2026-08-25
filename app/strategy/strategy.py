@@ -8,6 +8,8 @@ Replace the placeholder implementation with your own strategy.
 import pandas as pd
 import random
 
+random.seed(42)
+
 def strategy(df : pd.DataFrame):
     """
     Determine the trading action based on historical OHLCV data.

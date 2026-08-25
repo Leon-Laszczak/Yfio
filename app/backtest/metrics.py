@@ -37,13 +37,20 @@ class MetricsComputer:
 
         Returns:
             Approximate periods per year based on the observation span.
+        
+        Raises:
+            ValueError if history has less than two records.
         """
+
+        if len(hist) < 2:
+            raise ValueError("Insufficient amount of data")
+        
         duration = hist.index[-1] - hist.index[0]
-        years = duration.total_seconds() / (365.25 * 24 * 60 * 60)
+        self.years = duration.total_seconds() / (365.25 * 24 * 60 * 60)
 
-        return len(hist) / years
+        return len(hist) / self.years
 
-    def compute_ratios(self, ret: np.array, ppy: float) -> tuple[float]:
+    def compute_ratios(self, ret: np.array, ppy: float, cagr : float) -> tuple[float]:
         """Compute Sharpe, Sortino, and Calmar ratios from return data.
 
         Args:
@@ -55,8 +62,6 @@ class MetricsComputer:
         """
         mean = ret.mean()
         vol = ret.std()
-
-        cagr = (1+mean) ** self.ppy - 1
 
         sharpe = cagr / (vol * np.sqrt(ppy)) if vol * np.sqrt(ppy) != 0 else 0.0
 
@@ -202,10 +207,10 @@ class MetricsComputer:
         Returns:
             A dictionary containing all computed backtest metrics.
         """
-        cagr = (1+self.ret.mean()) ** self.ppy - 1
+        cagr = (self.history.iloc[-1]/self.history.iloc[0]) ** (1/self.years)
         vol = self.ret.std() * np.sqrt(self.ppy)
 
-        sharpe, sortino, calmar = self.compute_ratios(self.ret, self.ppy)
+        sharpe, sortino, calmar = self.compute_ratios(self.ret, self.ppy,cagr)
         max_dd, max_dur, mean_dur = self.compute_drawdown(self.ret)
         var_95, var_99, cvar_95, cvar_99 = self.compute_var_and_cvar(self.ret)
         pnl, pct_pnl = self.compute_pnl(self.history)
