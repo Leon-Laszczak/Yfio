@@ -1,9 +1,8 @@
-from app.strategy.strategy import strategy
+from app.strategy.strategy import strategy, MIN_LENGTH
 from app.backtest.data import fetch_data
 from app.backtest.metrics import MetricsComputer
 
 import pandas as pd
-
 
 def backtest(ticker: str, period: str, interval: str, transaction_cost: float = 0.001) -> tuple:
     """
@@ -43,6 +42,8 @@ def backtest(ticker: str, period: str, interval: str, transaction_cost: float = 
         'Skewness': np.float64(-0.18816716761338828), 'Kurtosis': np.float64(2.3108627113436633)}
 
     """
+    if transaction_cost < 0:
+        raise ValueError("Transaction cost can't be nagative")
     cash = 10_000
     position_type = "FLAT"
     entry_price = 0
@@ -53,24 +54,14 @@ def backtest(ticker: str, period: str, interval: str, transaction_cost: float = 
 
     history = [10_000]
     trades = []
-    min_length = 0
 
-    # strategy() can optionally return (signal, min_length) if it needs
-    # a minimum amount of historical data before producing real signals
-    a = strategy(df)
-    if isinstance(a, tuple):
-        min_length = a[1]
-
-    for i in range(min_length, len(df) - 1):
+    for i in range(MIN_LENGTH, len(df) - 1):
 
         if position_type != "FLAT":
             trade_duration += 1
 
         historical_df = df.iloc[:i + 1]
         signal = strategy(historical_df)
-
-        if isinstance(signal,tuple):
-            signal = signal[0]
 
         # trades are executed on next bar's open, not the signal bar's close
         price = df["Open"].iloc[i + 1]
@@ -87,15 +78,19 @@ def backtest(ticker: str, period: str, interval: str, transaction_cost: float = 
         value = calculate_value(cash, position_type, curr_price, entry_amount)
         history.append(value)
 
+    last_price = df["Close"].iloc[-1]
     if position_type == "LONG":
-        cash, position_type, entry_price, entry_amount, trade = close_long(price,cash,entry_price,entry_amount,transaction_cost,df.index[-1],df.index[-trade_duration-1])
+        cash, position_type, entry_price, entry_amount, trade = close_long(last_price,cash,entry_price,entry_amount,transaction_cost,df.index[-1],df.index[-trade_duration-1])
         trades.append(trade)
-    elif position_type == "SHORT":
-            cash, position_type, entry_price, entry_amount, trade = close_short(price,cash,entry_price,entry_amount,transaction_cost,df.index[-1],df.index[-trade_duration-1])
-            trades.append(trade)
+        history[-1] = cash
 
+    elif position_type == "SHORT":
+        cash, position_type, entry_price, entry_amount, trade = close_short(last_price,cash,entry_price,entry_amount,transaction_cost,df.index[-1],df.index[-trade_duration-1])
+        trades.append(trade)
+        history[-1] = cash
+        
     history = pd.Series(history)
-    history.index = df.index
+    history.index = df.index[MIN_LENGTH:]
 
     if trades:
         trades = pd.DataFrame(trades)

@@ -10,6 +10,8 @@ import random
 
 random.seed(42)
 
+MIN_LENGTH = 0 # Change this to suit your strategy
+
 def strategy(df : pd.DataFrame):
     """
     Determine the trading action based on historical OHLCV data.
@@ -31,9 +33,9 @@ def strategy(df : pd.DataFrame):
         This implementation is only a placeholder and makes random trading
         decisions. It should be replaced with an actual trading strategy.
 
-        If your strategy requires a minimum DataFrame length the function should
-        return a tuple containing a signal and a minimum DataFrame length
-    
+        If your strategy needs a certain amount of data to work please change the 
+        MIN_LENGTH variable
+
     Example:
         >>> action = strategy(df)
         >>> print(action)

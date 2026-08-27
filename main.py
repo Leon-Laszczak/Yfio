@@ -11,12 +11,16 @@ import pandas as pd
 
 def run_backtest(ticker,period,interval,transaction_cost):
     with st.spinner("Running backtest..."):
-        payload,history,trades = backtest(ticker,period,interval,transaction_cost/100)
-        st.session_state.payload = payload
-        st.session_state.history = history
-        st.session_state.trades = trades
+        try:
+            payload,history,trades = backtest(ticker,period,interval,transaction_cost/100)
+            st.session_state.payload = payload
+            st.session_state.history = history
+            st.session_state.trades = trades
+        except Exception as e:
+            st.error(f"An error occured during the backtest. Details: {str(e)}")
 
-if ("payload" and "history" and "trades") not in st.session_state:
+required_keys = ("payload","history","trades")
+if not all(key in st.session_state for key in required_keys):
     st.session_state.payload = {
             "Total PnL": 0,
             "Percent PnL": 0,

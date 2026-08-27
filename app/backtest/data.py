@@ -34,12 +34,6 @@ def fetch_data(ticker : str, period : PeriodType = "1y", interval : IntervalType
     Raises:
         ValueError if no data for the ticker is found
 
-    Notes:
-        If the requested period returns no data, the function retries with
-        ``period="max"`` using the same interval. This can be useful when
-        Yahoo Finance restricts the amount of historical data available
-        for smaller intervals.
-
     Example:
         >>> df = download_data("AAPL","5y","1d")
         >>> print(df.head())
@@ -47,16 +41,13 @@ def fetch_data(ticker : str, period : PeriodType = "1y", interval : IntervalType
 
     common_suffixes = ["",".L",".DE",".NV",".AS",".PA",".AX",".TO",".HK",".KS",".WA","=X","=F","-BTC"] # =X for forex pairs, =F for futures contracts, -BTC for cryptocurrencies
     base = ticker
-
+    data = None
+    
     for suffix in common_suffixes:
         try:
             ticker = f"{base}{suffix}"
             data = yf.Ticker(ticker).history(period=period,interval=interval)
 
-            if data.empty:
-                # Retry with the maximum available history. Note that Yahoo Finance
-                # still imposes history limits for smaller intervals.
-                data = yf.Ticker(ticker).history(period="max", interval=interval) 
             required_columns = ["Open", "High", "Low", "Close", "Volume"]
 
             if not data.empty and all(col in data.columns for col in required_columns):
@@ -66,7 +57,11 @@ def fetch_data(ticker : str, period : PeriodType = "1y", interval : IntervalType
         except Exception:
             continue
 
-    if data.empty or data is None:
-        raise ValueError(f"No data found for ticker: {base}")
+    if (
+        data is None 
+        or data.empty 
+        or not all(column in data.columns for column in required_columns)
+        ):
+        raise ValueError(f"No valid data found for ticker: {base}")
     
     return data[["Open","High","Low","Close","Volume"]]

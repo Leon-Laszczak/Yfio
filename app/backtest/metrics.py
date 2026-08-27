@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis, skew
 
+MIN_DRAWDOWN = -0.025 # noise filter: ignore drawdown episodes shallower than 2.5% so tiny fluctuations aren't counted as separate "drawdowns"
 
 class MetricsComputer:
     """Calculate common investment metrics for a backtested strategy.
@@ -24,12 +25,17 @@ class MetricsComputer:
             trades: Trade records used to estimate win rate and related metrics.
                     Expected columns : type,amount, price_in, price_out, and pnl.
         """
+        
+        if not isinstance(history.index,pd.DatetimeIndex):
+            raise TypeError("Index in history should be a datetime index")
+
         self.history = history
         self.trades = trades
-        self.ppy = self.get_periods_per_year(self.history)
+        self.ppy = self.get_periods_per_year()
         self.ret = self.history.pct_change().dropna().to_numpy()
+        self.daily_ret = self.get_daily_returns()
 
-    def get_periods_per_year(self, hist: pd.Series) -> float:
+    def get_periods_per_year(self) -> float:
         """Estimate the number of periods per year from the series duration.
 
         Args:
@@ -42,15 +48,37 @@ class MetricsComputer:
             ValueError if history has less than two records.
         """
 
-        if len(hist) < 2:
+        if len(self.history) < 2:
             raise ValueError("Insufficient amount of data")
         
-        duration = hist.index[-1] - hist.index[0]
+        duration = self.history.index[-1] - self.history.index[0]
         self.years = duration.total_seconds() / (365.25 * 24 * 60 * 60)
 
-        return len(hist) / self.years
+        return (len(self.history) - 1) / self.years
+    
+    def get_daily_returns(self) -> np.ndarray:
+        """
+        Convert the equity curve to daily returns.
 
-    def compute_ratios(self, ret: np.array, ppy: float, cagr : float) -> tuple[float]:
+        The last portfolio value from each calendar day is used.
+        Days without observations are ignored.
+        """
+        if not isinstance(self.history.index, pd.DatetimeIndex):
+            raise TypeError("History must have a DatetimeIndex")
+
+        daily_equity = (
+            self.history
+            .sort_index()
+            .resample("1D")
+            .last()
+            .dropna()
+        )
+
+        daily_returns = daily_equity.pct_change().dropna()
+
+        return daily_returns.to_numpy()
+
+    def compute_ratios(self, cagr : float) -> tuple[float]:
         """Compute Sharpe, Sortino, and Calmar ratios from return data.
 
         Args:
@@ -60,18 +88,20 @@ class MetricsComputer:
         Returns:
             A tuple containing the Sharpe, Sortino, and Calmar ratios.
         """
-        mean = ret.mean()
-        vol = ret.std()
+        arthmetic_return = self.ret.mean() * self.ppy
+        vol = self.ret.std()
 
-        sharpe = cagr / (vol * np.sqrt(ppy)) if vol * np.sqrt(ppy) != 0 else 0.0
+        sharpe = arthmetic_return / (vol * np.sqrt(self.ppy)) if vol * np.sqrt(self.ppy) != 0 else 0.0
 
         mar = 0
-        downside = np.minimum((ret - mar), 0)
+        downside = np.minimum((self.ret - mar), 0)
         downside_deviation = np.sqrt(np.mean(downside**2))
 
-        sortino = cagr / (downside_deviation * np.sqrt(ppy)) if downside_deviation * np.sqrt(ppy) != 0 else 0.0
+        sortino = arthmetic_return / (downside_deviation * np.sqrt(self.ppy)) if downside_deviation * np.sqrt(self.ppy) != 0 else 0.0
 
-        cum       = pd.Series((1 + ret).cumprod())
+        cum = pd.Series(
+            np.concatenate(([1.0], (1 + self.daily_ret).cumprod()))
+        )
         roll_max  = cum.cummax()
         dd_series = (cum - roll_max) / roll_max
         max_dd    = dd_series.min()
@@ -80,7 +110,7 @@ class MetricsComputer:
 
         return sharpe, sortino, calmar
 
-    def compute_drawdown(self, ret: np.array) -> tuple:
+    def compute_drawdown(self) -> tuple:
         """Measure drawdown depth and recovery times.
 
         Args:
@@ -90,7 +120,10 @@ class MetricsComputer:
             A tuple containing maximum drawdown, maximum recovery time, and mean
             recovery time.
         """
-        cum       = pd.Series((1 + ret).cumprod())
+
+        cum = pd.Series(
+                np.concatenate(([1.0], (1 + self.daily_ret).cumprod()))
+            )
         roll_max  = cum.cummax()
         dd_series = (cum - roll_max) / roll_max
         max_dd    = dd_series.min()
@@ -100,35 +133,44 @@ class MetricsComputer:
             peak_val = roll_max[through_idx]
             peak_idx = cum[:through_idx][cum.loc[:through_idx] == peak_val].index[-1]
             rec_cand = cum[through_idx:][cum.loc[through_idx:] >= peak_val]
-            rec_idx = rec_cand.index[0] if len(rec_cand > 0) else cum.index[-1]
+            rec_idx = rec_cand.index[0] if len(rec_cand) > 0 else cum.index[-1]
 
-            max_dur = cum.index[rec_idx]- cum.index[peak_idx]
+            max_dur = (cum.index[rec_idx]- cum.index[peak_idx])
         else:
             max_dur = 0
 
-        durs = []
+        recovery_times = []
+        drawdown = cum/roll_max - 1
+        in_dd = False
+        peak_idx = None
+        trough_val = 0.0
 
         for i in range(len(cum)):
-            cur = 0
-            r = i
-            
-            while r < len(cum) and cum[r] < roll_max[r]:
-                cur += 1
-                r += 1
+            idx = i
+            dd = drawdown.iloc[i]
 
-            if 0 < r-1 < len(cum) and cum[r-1] < roll_max[r-1]:
-                durs.append(cur)
+            if dd < MIN_DRAWDOWN and not in_dd:
+                in_dd = True
+                peak_idx = cum.index[i - 1] if i > 0 else idx
+                trough_val = dd
 
-        if len(durs) > 0:
-            mean_dur = sum(durs) / len(durs)
-        elif max_dur:
-            mean_dur = sum(durs)/1
+            elif dd < 0 and in_dd:
+                if dd < trough_val:
+                    trough_val = dd
+
+            elif dd >= 0 and in_dd:
+                in_dd = False
+                trough_val = 0
+                recovery_times.append((idx-peak_idx))
+
+        if len(recovery_times) > 0:
+            mean_dur = sum(recovery_times) / len(recovery_times)
         else:
             mean_dur = 0.0
 
         return max_dd, max_dur, mean_dur
 
-    def compute_var_and_cvar(self, ret: np.array) -> tuple[float]:
+    def compute_var_and_cvar(self) -> tuple[float]:
         """Estimate VaR and CVaR at 95% and 99% confidence levels.
 
         Args:
@@ -137,15 +179,20 @@ class MetricsComputer:
         Returns:
             A tuple containing VaR 95%, VaR 99%, CVaR 95%, and CVaR 99%.
         """
-        var_95 = np.percentile(ret, 5)
-        var_99 = np.percentile(ret, 1)
+        daily_ret = self.daily_ret[np.isfinite(self.daily_ret)]
 
-        cvar_95 = ret[ret <= np.percentile(ret, 5)].mean()
-        cvar_99 = ret[ret <= np.percentile(ret, 1)].mean()
+        if daily_ret.size == 0:
+            return 0.0, 0.0, 0.0, 0.0
+        
+        var_95 = np.percentile(self.daily_ret, 5)
+        var_99 = np.percentile(self.daily_ret, 1)
+
+        cvar_95 = self.daily_ret[self.daily_ret <= np.percentile(self.daily_ret, 5)].mean()
+        cvar_99 = self.daily_ret[self.daily_ret <= np.percentile(self.daily_ret, 1)].mean()
 
         return var_95, var_99, cvar_95, cvar_99
 
-    def compute_pnl(self, history: pd.Series) -> tuple:
+    def compute_pnl(self) -> tuple:
         """Compute absolute and percentage PnL over the series window.
 
         Args:
@@ -154,12 +201,12 @@ class MetricsComputer:
         Returns:
             A tuple containing total PnL and percentage PnL.
         """
-        pnl = history.iloc[-1] - history.iloc[0]
-        pct_pnl = pnl / history.iloc[0]
+        pnl = self.history.iloc[-1] - self.history.iloc[0]
+        pct_pnl = pnl / self.history.iloc[0]
 
         return pnl, pct_pnl
 
-    def compute_win_rate(self, trades: pd.DataFrame) -> float:
+    def compute_win_rate(self) -> float:
         """Calculate the proportion of profitable trades.
 
         Args:
@@ -168,13 +215,13 @@ class MetricsComputer:
         Returns:
             The win rate as a fraction between 0 and 1.
         """
-        winining_trades = len(trades["pnl"][trades["pnl"] > 0])
+        winining_trades = len(self.trades["pnl"][self.trades["pnl"] > 0])
 
-        win_rate = winining_trades / len(trades) if len(trades) > 0 else 0.0
+        win_rate = winining_trades / len(self.trades) if len(self.trades) > 0 else 0.0
 
         return win_rate
 
-    def compute_profit_factor(self, ret: np.array) -> float:
+    def compute_profit_factor(self) -> float:
         """Compute the ratio of gross profit to gross loss.
 
         Args:
@@ -183,11 +230,18 @@ class MetricsComputer:
         Returns:
             The profit factor value.
         """
-        profit_factor = ret[ret > 0].sum() / abs(ret[ret <= 0].sum())
+        pnl = self.trades["pnl"]
+        gross_profit = pnl[pnl>0].sum()
+        gross_loss = pnl[pnl<=0].sum()
+
+        profit_factor = gross_profit / abs(gross_loss) if gross_loss != 0 else 0.0
+
+        if gross_loss == 0 and gross_profit > 0:
+            return float("inf")
 
         return profit_factor
 
-    def compute_statistical(self, ret: np.array) -> tuple[float]:
+    def compute_statistical(self) -> tuple[float]:
         """Compute skewness and kurtosis of the return distribution.
 
         Args:
@@ -196,8 +250,8 @@ class MetricsComputer:
         Returns:
             A tuple containing skewness and kurtosis values.
         """
-        skewness = skew(ret)
-        kurtosis_ = kurtosis(ret)
+        skewness = skew(self.ret)
+        kurtosis_ = kurtosis(self.ret)
 
         return skewness, kurtosis_
 
@@ -207,16 +261,16 @@ class MetricsComputer:
         Returns:
             A dictionary containing all computed backtest metrics.
         """
-        cagr = (self.history.iloc[-1]/self.history.iloc[0]) ** (1/self.years)
+        cagr = (self.history.iloc[-1]/self.history.iloc[0]) ** (1/self.years) - 1
         vol = self.ret.std() * np.sqrt(self.ppy)
 
-        sharpe, sortino, calmar = self.compute_ratios(self.ret, self.ppy,cagr)
-        max_dd, max_dur, mean_dur = self.compute_drawdown(self.ret)
-        var_95, var_99, cvar_95, cvar_99 = self.compute_var_and_cvar(self.ret)
-        pnl, pct_pnl = self.compute_pnl(self.history)
-        win_rate = self.compute_win_rate(self.trades)
-        profit_factor = self.compute_profit_factor(self.ret)
-        skewness, kurtosis = self.compute_statistical(self.ret)
+        sharpe, sortino, calmar = self.compute_ratios(cagr)
+        max_dd, max_dur, mean_dur = self.compute_drawdown()
+        var_95, var_99, cvar_95, cvar_99 = self.compute_var_and_cvar()
+        pnl, pct_pnl = self.compute_pnl()
+        win_rate = self.compute_win_rate()
+        profit_factor = self.compute_profit_factor()
+        skewness, kurtosis = self.compute_statistical()
 
         payload = {
             "Total PnL": pnl,
