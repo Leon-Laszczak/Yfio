@@ -19,7 +19,7 @@ Yfio is a backtesting engine for hobby traders. It helps you check if the strate
 ### Installation
 
 ```bash
-git clone https://github.com/Leon-Laszczak/Yfio
+git clone https://github.com/Leon-Laszczak/Yfio.git
 cd Yfio
 pip install -r requirements.txt
 ```
@@ -36,13 +36,71 @@ After that you can open `http://localhost:8501`, enter the ticker and customize 
 
 ---
 
+## Testing
+
+Yfio includes unit and integration tests for the backtesting engine, metrics, trade execution, and edge cases.
+
+Run all tests with:
+
+```bash
+pytest -v
+```
+
+The test suite covers, among other things:
+
+- LONG and SHORT position execution
+- Transaction costs
+- Portfolio valuation
+- Forced position closing at the end of a backtest
+- Strategy minimum history length
+- PnL and win rate calculations
+- Profit factor
+- VaR and CVaR
+- Drawdowns and recovery times
+- Full end-to-end backtest scenarios
+
+---
+
+## Writing a Strategy
+
+Strategies live in `app/strategy/strategy.py`.
+
+A strategy receives historical OHLCV data up to the current candle and should return one of three signals:
+
+- `BUY`
+- `HOLD`
+- `SELL`
+
+Example:
+
+```python
+MIN_LENGTH = 20
+
+def strategy(df):
+    short_ma = df["Close"].rolling(5).mean().iloc[-1]
+    long_ma = df["Close"].rolling(20).mean().iloc[-1]
+
+    if short_ma > long_ma:
+        return "BUY"
+
+    if short_ma < long_ma:
+        return "SELL"
+
+    return "HOLD"
+```
+
+MIN_LENGTH defines how many candles the strategy needs before the backtest begins.
+
+Trades are executed on the next candle's Open price to reduce look-ahead bias.
+---
+
 ## Metrics
 
 ### Returns
 - **Total PnL** Describes how much the strategy earned/lost
 - **Percent PnL** Shows the total return of the strategy
 - **CAGR** Indicates how much would the strategy return yearly on average
-- **Volatility** Indicates how much the returns "swing" from the CAGR on average
+- **Volatility** Measures the annualized variability of strategy returns
 
 ### Risk Adjusted
 - **Sharpe Ratio** Measures the risk-adjusted return of the strategy
@@ -51,14 +109,14 @@ After that you can open `http://localhost:8501`, enter the ticker and customize 
 
 ### Drawdown
 - **Max Drawdown** Indicates the biggest decline from a local peak to the following low, before a new peak is reached
-- **Max Recovery Time** Shows how long it took to be profitable from the max drawdown
-- **Mean Recovery Time** Describes how long does it take on average for the strategy to become profitable again after a loss
+- **Max Recovery Time** Shows the longest time required for the portfolio to recover from a drawdown and reach its previous peak
+- **Mean Recovery Time** Shows the average duration of significant drawdown episodes before recovery
 
 ### Tail Risk
-- **VaR 1d 95%** Measures potential loss in the worst 5% of the days
-- **VaR 1d 99%** Measures potential loss in the worst 1% of the days
-- **CVaR 1d 95%** Describes average loss in the worst 5% of the days
-- **CVaR 1d 99%** Describes average loss in the worst 1% of the days
+- **VaR 1d 95%** Estimates the daily return threshold exceeded by losses on approximately 5% of days
+- **VaR 1d 99%** Estimates the daily return threshold exceeded by losses on approximately 1% of days
+- **CVaR 1d 95%** Measures the average daily return on days worse than the 95% VaR threshold
+- **CVaR 1d 99%** Measures the average daily return on days worse than the 99% VaR threshold
 
 ### Trade Stats
 - **Win Rate** Indicates what percent of the trades were profitable
@@ -70,8 +128,37 @@ After that you can open `http://localhost:8501`, enter the ticker and customize 
 
 ---
 
-## Project Structure
+## Current Limitations
 
+Yfio is currently an early-stage backtesting engine intended primarily for learning, experimentation, and hobby use.
+
+Current limitations include:
+
+- One open position at a time
+- No take-profit or stop-loss orders yet
+- No configurable position sizing yet
+- No portfolio-level multi-asset backtesting
+- No slippage model
+- Historical data depends on Yahoo Finance availability and accuracy
+
+---
+
+## Roadmap
+
+Planned features include:
+
+- [ ] Take-profit and stop-loss orders
+- [ ] Configurable position sizing
+- [ ] Risk-based position sizing
+- [ ] Improved trade management
+- [ ] Slippage modeling
+- [ ] Multi-asset portfolio backtesting
+- [ ] Projection of future strategy returns
+- [ ] More strategy examples
+
+---
+
+## Project Structure
 ```
 Yfio/
 ├── app/
@@ -81,6 +168,10 @@ Yfio/
 │   │   └── metrics.py       # Performance & risk metrics
 │   └── strategy/
 │       └── strategy.py      # Your custom strategy goes here
+├── tests/
+│   ├── test_backtest.py
+│   ├── test_backtest_integration.py
+│   └── test_metrics.py
 ├── main.py                  # Streamlit dashboard
 ├── requirements.txt
 ├── LICENSE
@@ -89,6 +180,15 @@ Yfio/
 
 ---
 
+## Disclaimer
+
+Yfio is intended for educational and research purposes only.
+
+Backtest results do not guarantee future performance. Historical data, transaction costs, execution assumptions, and simplified market mechanics may differ from real trading conditions.
+
+This project does not provide financial or investment advice.
+
+---
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
