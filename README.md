@@ -134,9 +134,6 @@ Yfio is currently an early-stage backtesting engine intended primarily for learn
 
 Current limitations include:
 
-- One open position at a time
-- No take-profit or stop-loss orders yet
-- No configurable position sizing yet
 - No portfolio-level multi-asset backtesting
 - No slippage model
 - Historical data depends on Yahoo Finance availability and accuracy
@@ -147,9 +144,9 @@ Current limitations include:
 
 Planned features include:
 
-- [ ] Take-profit and stop-loss orders
-- [ ] Configurable position sizing
-- [ ] Risk-based position sizing
+- [x] Take-profit and stop-loss orders
+- [x] Configurable position sizing
+- [x] Risk-based position sizing
 - [ ] Improved trade management
 - [ ] Slippage modeling
 - [ ] Multi-asset portfolio backtesting
