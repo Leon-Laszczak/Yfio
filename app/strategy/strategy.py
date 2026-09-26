@@ -10,39 +10,39 @@ import random
 
 random.seed(42)
 
-MIN_LENGTH = 0 # Change this to suit your strategy
+MIN_LENGTH = 0 # Warm-up offset: the first signal receives MIN_LENGTH + 1 candles.
 
 def strategy(df : pd.DataFrame):
-    """
-    Determine the trading action based on historical OHLCV data.
-
-    This is currently a placeholder implementation that randomly selects
-    a trading action. Replace it with an actual trading strategy.
+    """Return a random BUY, HOLD, or SELL signal for the backtest engine.
 
     Args:
-        df: A pandas DataFrame containing historical OHLCV data.
-        Expected columns are Open, High, Low, Close, and Volume.
-    
+        df: Historical OHLCV data through the current candle. This placeholder
+            ignores the data and does not modify it.
+
     Returns:
-        The trading action to execute.. Supported values:
-        BUY - Open a LONG position or close a SHORT position, 
-        HOLD - do nothing, 
-        SELL - Close a LONG postion or open a SHORT position
-    
+        BUY requests a new LONG trade, SELL requests a new SHORT trade, and
+        HOLD requests no new trade. The engine executes signals at the next
+        candle's Open, subject to available cash.
+
     Notes:
-        This implementation is only a placeholder and makes random trading
-        decisions. It should be replaced with an actual trading strategy.
-
-        If your strategy needs a certain amount of data to work please change the 
-        MIN_LENGTH variable
-
+        Signals do not close existing trades. The engine manages exits through
+        each trade's take profit, stop loss, or the final backtest Close.
+        The module seeds Python's shared random generator once at import.
+        Later calls advance that generator; each backtest does not reset it.
+        Replace this placeholder and set MIN_LENGTH for the strategy's warm-up.
+    
     Example:
-        >>> action = strategy(df)
-        >>> print(action)
-        "BUY"
-
-        >>> action = strategy(df)
-        >>> print(action)
-        ("BUY",20)
+        def strategy(df)
+            df = df.copy()
+            fast_p = 20
+            slow_p = 50
+            sma_fast = df["Close"].ewm(span=fast_p, adjust=False).mean()
+            sma_slow = df["Close"].ewm(span=slow_p, adjust=False).mean()
+            
+            if sma_fast[-2] <= sma_slow[-2] and sma_fast[-1] > sma_slow[-1]:
+                return "BUY"   # Golden Cross -> Buy
+            elif sma_fast[-2] >= sma_slow[-2] and sma_fast[-1] < sma_slow[-1]:
+                return "SELL"  # Death Cross -> Sell
+            return "HOLD"
     """
     return random.choice(["BUY","HOLD","SELL"])

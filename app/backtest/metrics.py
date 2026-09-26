@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis, skew
 
-MIN_DRAWDOWN = -0.025 # noise filter: ignore drawdown episodes shallower than 2.5% so tiny fluctuations aren't counted as separate "drawdowns"
+# Threshold for mean recovery episodes only; maximum drawdown uses all declines.
+MIN_DRAWDOWN = -0.025
 
 class MetricsComputer:
     """Calculate common investment metrics for a backtested strategy.
@@ -18,12 +19,13 @@ class MetricsComputer:
     """
 
     def __init__(self, history: pd.Series, trades: pd.DataFrame):
-        """Initialize the metrics calculator.
+        """Initialize metrics from an equity history and closed-trade PnL.
 
         Args:
-            history: Time-indexed price or equity history used to derive returns.
-            trades: Trade records used to estimate win rate and related metrics.
-                    Expected columns : type,amount, price_in, price_out, and pnl.
+            history: Numeric series with a DatetimeIndex, at least two observations,
+                and a nonzero observation span. The engine supplies portfolio equity.
+            trades: Closed-trade DataFrame with a pnl column. Trade metrics use this
+                column only; the engine supplies PnL after entry and exit fees.
         """
         
         if not isinstance(history.index,pd.DatetimeIndex):
@@ -36,16 +38,17 @@ class MetricsComputer:
         self.daily_ret = self.get_daily_returns()
 
     def get_periods_per_year(self) -> float:
-        """Estimate the number of periods per year from the series duration.
+        """Estimate return periods per year from self.history's observation span.
 
-        Args:
-            hist: Historical equity or price series with a datetime index.
+        Store the elapsed calendar time in self.years using 365.25 days per year.
+        Divide the number of return intervals by that span rather than assuming a
+        fixed trading calendar.
 
         Returns:
-            Approximate periods per year based on the observation span.
-        
+            Estimated return periods per year.
+
         Raises:
-            ValueError if history has less than two records.
+            ValueError: If history contains fewer than two observations.
         """
 
         if len(self.history) < 2:
@@ -79,14 +82,17 @@ class MetricsComputer:
         return daily_returns.to_numpy()
 
     def compute_ratios(self, cagr : float) -> tuple[float]:
-        """Compute Sharpe, Sortino, and Calmar ratios from return data.
+        """Compute Sharpe, Sortino, and Calmar ratios from stored returns.
 
         Args:
-            ret: Array of periodic returns.
-            ppy: Estimated periods per year.
+            cagr: Annualized compound return, expressed as a fraction.
 
         Returns:
-            A tuple containing the Sharpe, Sortino, and Calmar ratios.
+            Sharpe, Sortino, and Calmar ratios, in that order. Sharpe and Sortino
+            use periodic returns and estimated periods per year, with a zero
+            risk-free rate and zero minimum acceptable return. Calmar divides
+            cagr by the absolute maximum drawdown of daily returns. A zero
+            denominator produces 0.0 for the corresponding ratio.
         """
         arthmetic_return = self.ret.mean() * self.ppy
         vol = self.ret.std()
@@ -111,14 +117,20 @@ class MetricsComputer:
         return sharpe, sortino, calmar
 
     def compute_drawdown(self) -> tuple:
-        """Measure drawdown depth and recovery times.
-
-        Args:
-            ret: Array of periodic returns.
+        """Measure drawdown and recovery durations from stored daily returns.
 
         Returns:
-            A tuple containing maximum drawdown, maximum recovery time, and mean
-            recovery time.
+            Maximum drawdown as a non-positive fraction, duration of the deepest
+            drawdown, and mean duration of completed episodes below MIN_DRAWDOWN.
+            Durations count observed daily-return steps, not elapsed calendar days.
+
+        Notes:
+            The payload calls the second value "Max Recovery Time", but this is
+            the recovery duration of the deepest drawdown, not necessarily the
+            longest duration. If it never recovers, the duration ends at the last
+            observation. Mean recovery starts one step before the threshold breach
+            and excludes episodes that remain unrecovered. No completed qualifying
+            episode produces a mean of 0.0.
         """
 
         cum = pd.Series(
@@ -171,13 +183,13 @@ class MetricsComputer:
         return max_dd, max_dur, mean_dur
 
     def compute_var_and_cvar(self) -> tuple[float]:
-        """Estimate VaR and CVaR at 95% and 99% confidence levels.
-
-        Args:
-            ret: Array of periodic returns.
+        """Compute historical tail-return statistics from stored daily returns.
 
         Returns:
-            A tuple containing VaR 95%, VaR 99%, CVaR 95%, and CVaR 99%.
+            The 5th and 1st return percentiles (VaR 95% and 99%), followed by the
+            mean returns at or below each threshold (CVaR 95% and 99%). Values are
+            signed return fractions, not positive loss amounts. If no finite daily
+            return exists, return four zeros.
         """
         daily_ret = self.daily_ret[np.isfinite(self.daily_ret)]
 
@@ -193,13 +205,11 @@ class MetricsComputer:
         return var_95, var_99, cvar_95, cvar_99
 
     def compute_pnl(self) -> tuple:
-        """Compute absolute and percentage PnL over the series window.
-
-        Args:
-            history: Historical equity curve.
+        """Compute the change between the first and last stored equity values.
 
         Returns:
-            A tuple containing total PnL and percentage PnL.
+            Absolute PnL and fractional PnL relative to starting equity. The
+            "Percent PnL" payload value is a fraction, not a value multiplied by 100.
         """
         pnl = self.history.iloc[-1] - self.history.iloc[0]
         pct_pnl = pnl / self.history.iloc[0]
@@ -207,13 +217,11 @@ class MetricsComputer:
         return pnl, pct_pnl
 
     def compute_win_rate(self) -> float:
-        """Calculate the proportion of profitable trades.
-
-        Args:
-            trades: DataFrame containing trade-level PnL values.
+        """Calculate the fraction of closed trades with strictly positive PnL.
 
         Returns:
-            The win rate as a fraction between 0 and 1.
+            Profitable trades divided by all closed trades. Break-even trades
+            count in the denominator. Return 0.0 when no trades exist.
         """
         winining_trades = len(self.trades["pnl"][self.trades["pnl"] > 0])
 
@@ -222,13 +230,13 @@ class MetricsComputer:
         return win_rate
 
     def compute_profit_factor(self) -> float:
-        """Compute the ratio of gross profit to gross loss.
+        """Divide summed positive trade PnL by absolute summed non-positive PnL.
 
-        Args:
-            ret: Array of periodic returns.
+        The engine's trade PnL already includes entry and exit transaction fees.
 
         Returns:
-            The profit factor value.
+            Profit factor, infinity for profits with no losses, or 0.0 when neither
+            profits nor losses exist.
         """
         pnl = self.trades["pnl"]
         gross_profit = pnl[pnl>0].sum()
@@ -242,13 +250,11 @@ class MetricsComputer:
         return profit_factor
 
     def compute_statistical(self) -> tuple[float]:
-        """Compute skewness and kurtosis of the return distribution.
-
-        Args:
-            ret: Array of periodic returns.
+        """Compute skewness and excess kurtosis of stored periodic returns.
 
         Returns:
-            A tuple containing skewness and kurtosis values.
+            SciPy's default skewness and Fisher excess kurtosis estimates. These
+            use the original observation interval, not resampled daily returns.
         """
         skewness = skew(self.ret)
         kurtosis_ = kurtosis(self.ret)

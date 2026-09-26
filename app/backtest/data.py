@@ -14,7 +14,8 @@ def fetch_data(ticker : str, period : PeriodType = "1y", interval : IntervalType
     """ 
     Fetches stock prices history from yfinance.
     Attempts the provided ticker and a list of common Yahoo Finance
-    suffixes until valid price data is found.
+    suffixes until nonempty data with the required columns is found.
+    Provider exceptions cause the next suffix to be tried.
 
     Args:
         ticker: Stock symbol (can be without the suffix) eg. AAPL,TSLA,ASML.NV
@@ -29,17 +30,18 @@ def fetch_data(ticker : str, period : PeriodType = "1y", interval : IntervalType
         Please note that smaller intervals(below 1d) may have limited available history
     
     Returns:
-        DataFrame with columns Open, High, Low, Close, Volume, indexed by date.
+        DataFrame with Open, High, Low, Close, and Volume columns, sorted by
+        timestamp. Duplicate timestamps keep the last row.
     
     Raises:
         ValueError if no data for the ticker is found
 
     Example:
-        >>> df = download_data("AAPL","5y","1d")
+        >>> df = fetch_data("AAPL", "5y", "1d")
         >>> print(df.head())
     """
 
-    common_suffixes = ["",".L",".DE",".NV",".AS",".PA",".AX",".TO",".HK",".KS",".WA","=X","=F","-BTC"] # =X for forex pairs, =F for futures contracts, -BTC for cryptocurrencies
+    common_suffixes = ["",".L",".DE",".NV",".AS",".PA",".AX",".TO",".HK",".KS",".WA","=X","=F","-BTC"] # =X for forex pairs, =F for futures contracts, -BTC for crypto pairs quoted in BTC
     base = ticker
     data = None
     
